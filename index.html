@@ -1,0 +1,689 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Minecraft Server Tracker</title>
+    <!-- Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Chart.js for graphs -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- FontAwesome for Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <style>
+        body {
+            background-color: #0f172a; /* Slate 900 */
+            color: #e2e8f0; /* Slate 200 */
+        }
+        
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #1e293b; 
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #475569; 
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #64748b; 
+        }
+
+        .glass-panel {
+            background: rgba(30, 41, 59, 0.7);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .server-item.active {
+            background: rgba(59, 130, 246, 0.15); /* Blue tint */
+            border-left: 4px solid #3b82f6;
+        }
+
+        /* Animation for delta arrows */
+        @keyframes popIn {
+            0% { transform: scale(0); opacity: 0; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+        .delta-indicator {
+            animation: popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+    </style>
+</head>
+<body class="h-screen w-screen flex overflow-hidden font-sans">
+
+    <!-- SIDEBAR (25-40% width, flexible) -->
+    <aside class="w-1/4 min-w-[300px] max-w-[400px] bg-slate-900 border-r border-slate-800 flex flex-col h-full z-10">
+        <!-- Sidebar Header -->
+        <div class="p-6 border-b border-slate-800 flex justify-between items-center">
+            <h1 class="text-xl font-bold text-white tracking-tight">
+                <i class="fa-solid fa-cube text-blue-500 mr-2"></i>MC Tracker
+            </h1>
+            <button onclick="openModal()" class="bg-blue-600 hover:bg-blue-500 text-white p-2 rounded-lg transition-colors shadow-lg shadow-blue-500/20">
+                <i class="fa-solid fa-plus"></i>
+            </button>
+        </div>
+
+        <!-- Server List -->
+        <div id="serverList" class="flex-1 overflow-y-auto p-4 space-y-2">
+            <!-- Dynamic Server Items will appear here -->
+            <div id="emptyState" class="text-center text-slate-500 mt-10">
+                <p>No servers tracked.</p>
+                <p class="text-sm">Click + to add one.</p>
+            </div>
+        </div>
+
+        <!-- Connection Status Footer -->
+        <div class="p-3 bg-slate-950 text-xs text-slate-500 flex justify-between items-center">
+            <span id="connectionStatus"><i class="fa-solid fa-circle text-red-500 mr-1"></i> Disconnected</span>
+            <span id="version">v1.2.1</span>
+        </div>
+    </aside>
+
+    <!-- MAIN CONTENT AREA -->
+    <main class="flex-1 h-full relative flex flex-col bg-slate-950 overflow-hidden">
+        
+        <!-- Welcome / Empty View -->
+        <div id="welcomeView" class="absolute inset-0 flex items-center justify-center flex-col text-slate-600">
+            <i class="fa-regular fa-chart-bar text-6xl mb-4 opacity-50"></i>
+            <h2 class="text-2xl font-semibold">Select a server to view stats</h2>
+        </div>
+
+        <!-- Server Detail View (Hidden by default) -->
+        <div id="detailView" class="hidden flex-col h-full p-8 overflow-y-auto">
+            
+            <!-- Header Info -->
+            <div class="flex justify-between items-start mb-8">
+                <div class="flex items-center gap-4">
+                    <img id="detailFavicon" src="" alt="icon" class="w-16 h-16 rounded-lg bg-slate-800 object-cover shadow-xl hidden">
+                    <div id="detailIconPlaceholder" class="w-16 h-16 rounded-lg bg-slate-800 flex items-center justify-center text-slate-600 shadow-xl">
+                        <i class="fa-solid fa-server text-2xl"></i>
+                    </div>
+                    <div>
+                        <h1 id="detailTitle" class="text-3xl font-bold text-white mb-1">Server Name</h1>
+                        <div class="flex items-center gap-3 text-sm text-slate-400">
+                            <span class="bg-slate-800 px-2 py-1 rounded text-slate-300 font-mono" id="detailAddress">play.example.com:25565</span>
+                            <span id="detailStatusBadge" class="px-2 py-1 rounded bg-green-500/20 text-green-400 border border-green-500/30">Online</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="text-right">
+                    <p class="text-slate-400 text-sm uppercase tracking-wider font-semibold">Tracking Time</p>
+                    <p id="detailUptime" class="text-3xl font-mono text-white">00:00:00</p>
+                </div>
+            </div>
+
+            <!-- Stats Grid -->
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+                <!-- Latency Card -->
+                <div class="glass-panel p-6 rounded-xl border border-slate-700/50">
+                    <div class="flex items-center justify-between mb-2">
+                        <h3 class="text-slate-400 font-medium">Avg Ping (5m)</h3>
+                        <i class="fa-solid fa-wifi text-blue-400"></i>
+                    </div>
+                    <div class="flex items-end gap-2">
+                        <span id="detailAvgPing" class="text-3xl font-bold text-white">--</span>
+                        <span class="text-slate-500 mb-1">ms</span>
+                    </div>
+                </div>
+
+                <!-- Players Card -->
+                <div class="glass-panel p-6 rounded-xl border border-slate-700/50">
+                    <div class="flex items-center justify-between mb-2">
+                        <h3 class="text-slate-400 font-medium">Players</h3>
+                        <i class="fa-solid fa-users text-purple-400"></i>
+                    </div>
+                    <div class="flex items-center gap-3">
+                        <span id="detailPlayers" class="text-3xl font-bold text-white">0 / 0</span>
+                        
+                        <!-- Delta Indicator -->
+                        <div id="playerDelta" class="hidden px-2 py-0.5 rounded-full text-xs font-bold items-center gap-1 delta-indicator">
+                            <i id="playerDeltaIcon" class="fa-solid fa-arrow-up"></i>
+                            <span id="playerDeltaValue">0</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Uptime % Card -->
+                <div class="glass-panel p-6 rounded-xl border border-slate-700/50">
+                    <div class="flex items-center justify-between mb-2">
+                        <h3 class="text-slate-400 font-medium">Uptime</h3>
+                        <i class="fa-solid fa-stopwatch text-green-400"></i>
+                    </div>
+                    <div class="flex items-end gap-2">
+                        <span id="detailUptimePercent" class="text-3xl font-bold text-white">--%</span>
+                    </div>
+                    <div class="text-xs text-slate-500 mt-1" id="detailUptimeRatio">0/0 pings</div>
+                </div>
+
+                <!-- MOTD Card (Full Width) -->
+                <div class="glass-panel p-6 rounded-xl border border-slate-700/50 md:col-span-3">
+                    <div class="flex items-center justify-between mb-2">
+                        <h3 class="text-slate-400 font-medium">MOTD</h3>
+                        <i class="fa-solid fa-message text-slate-400"></i>
+                    </div>
+                    <p id="detailMotd" class="text-slate-300 text-xs font-mono bg-slate-900/50 p-3 rounded border border-slate-800 whitespace-pre-wrap overflow-hidden">
+                        Loading...
+                    </p>
+                </div>
+            </div>
+
+            <!-- Chart Area -->
+            <div class="glass-panel p-6 rounded-xl border border-slate-700/50 flex-1 min-h-[300px]">
+                <h3 class="text-slate-400 font-medium mb-4">Performance History</h3>
+                <div class="relative h-full w-full max-h-[400px]">
+                    <canvas id="performanceChart"></canvas>
+                </div>
+            </div>
+            
+            <div class="mt-4 text-right">
+                <button onclick="deleteCurrentServer()" class="text-red-400 hover:text-red-300 text-sm transition-colors">
+                    <i class="fa-solid fa-trash mr-1"></i> Stop Tracking Server
+                </button>
+            </div>
+
+        </div>
+    </main>
+
+    <!-- ADD SERVER MODAL -->
+    <div id="addModal" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 hidden flex items-center justify-center">
+        <div class="bg-slate-900 border border-slate-700 p-8 rounded-2xl shadow-2xl w-full max-w-md transform transition-all scale-95 opacity-0" id="modalContent">
+            <h2 class="text-2xl font-bold text-white mb-6">Track New Server</h2>
+            
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-slate-400 mb-1">Server Title (Alias)</label>
+                    <input type="text" id="inputTitle" placeholder="e.g. Hypixel Main" class="w-full bg-slate-800 border border-slate-700 rounded-lg p-3 text-white focus:ring-2 focus:ring-blue-500 focus:outline-none transition-all">
+                </div>
+                
+                <div class="grid grid-cols-3 gap-4">
+                    <div class="col-span-2">
+                        <label class="block text-sm font-medium text-slate-400 mb-1">Hostname / IP</label>
+                        <input type="text" id="inputIp" placeholder="mc.server.net" class="w-full bg-slate-800 border border-slate-700 rounded-lg p-3 text-white focus:ring-2 focus:ring-blue-500 focus:outline-none transition-all">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-slate-400 mb-1">Port</label>
+                        <input type="number" id="inputPort" placeholder="25565" value="25565" class="w-full bg-slate-800 border border-slate-700 rounded-lg p-3 text-white focus:ring-2 focus:ring-blue-500 focus:outline-none transition-all">
+                    </div>
+                </div>
+            </div>
+
+            <div class="flex justify-end gap-3 mt-8">
+                <button onclick="closeModal()" class="px-4 py-2 text-slate-400 hover:text-white transition-colors">Cancel</button>
+                <button onclick="submitAddServer()" class="px-6 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-medium shadow-lg shadow-blue-500/25 transition-all">Add Tracker</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- JAVASCRIPT LOGIC -->
+    <script>
+        // --- State Management ---
+        const state = {
+            servers: {}, // Key: "ip:port", Value: { info: {}, history: [], title: "", trackingStartTs: 0 }
+            selectedKey: null,
+            titles: JSON.parse(localStorage.getItem('mc_tracker_titles') || '{}')
+        };
+        
+        let chartInstance = null;
+        let ws = null;
+        let clockInterval = null;
+
+        // --- WebSocket Setup ---
+        function connect() {
+            ws = new WebSocket('ws://localhost:8080/ws');
+
+            ws.onopen = () => {
+                document.getElementById('connectionStatus').innerHTML = '<i class="fa-solid fa-circle text-green-500 mr-1"></i> Connected';
+                // Request all current servers from backend immediately
+                ws.send(JSON.stringify({ action: 'get_servers' }));
+                requestAnimationFrame(renderSidebar);
+            };
+
+            ws.onclose = () => {
+                document.getElementById('connectionStatus').innerHTML = '<i class="fa-solid fa-circle text-red-500 mr-1"></i> Reconnecting...';
+                setTimeout(connect, 3000);
+            };
+
+            ws.onmessage = (event) => {
+                const msg = JSON.parse(event.data);
+                handleMessage(msg);
+            };
+        }
+
+        function handleMessage(msg) {
+            // New logic: Backend can send 'history_dump' (array) or 'update' (single object)
+            if (msg.type === 'history_dump') {
+                const history = msg.data;
+                if (!history.length) return;
+                const latest = history[history.length - 1];
+                const key = `${latest.address}:${latest.port}`;
+                
+                // Initialize server
+                initializeServerState(key, latest);
+                
+                // Load history (converting raw backend timestamps)
+                state.servers[key].history = history.map(h => ({
+                    timestamp: h.timestamp, // Keep raw timestamp for graph logic
+                    time: new Date(h.timestamp * 1000).toLocaleTimeString(), // Fallback label
+                    latency: h.latency,
+                    players: h.players.online
+                }));
+
+                // Update UI
+                renderSidebar();
+                if (state.selectedKey === key) renderDetailView(key);
+
+            } else if (msg.type === 'update') {
+                const data = msg.data;
+                const key = `${data.address}:${data.port}`;
+                
+                let isNew = false;
+                if (!state.servers[key]) {
+                    isNew = true;
+                    initializeServerState(key, data);
+                } else {
+                    state.servers[key].previousPlayers = state.servers[key].current.players.online;
+                    state.servers[key].current = data;
+                }
+
+                // Add to history
+                state.servers[key].history.push({
+                    timestamp: data.timestamp, // RAW TIMESTAMP FOR CHART
+                    time: new Date(data.timestamp * 1000).toLocaleTimeString(),
+                    latency: data.latency,
+                    players: data.players.online
+                });
+                
+                // Limit to ~24h (17280 points) instead of 180
+                if (state.servers[key].history.length > 17280) state.servers[key].history.shift();
+
+                // Update UI
+                if (isNew) renderSidebar();
+                else renderSidebarItem(key);
+                
+                if (state.selectedKey === key) renderDetailView(key);
+            } else if (msg.type === 'remove') {
+                delete state.servers[msg.key];
+                if (state.selectedKey === msg.key) {
+                    state.selectedKey = null;
+                    document.getElementById('welcomeView').classList.remove('hidden');
+                    document.getElementById('detailView').classList.add('hidden');
+                }
+                renderSidebar();
+            }
+        }
+
+        function initializeServerState(key, data) {
+             const derivedStartTime = data.timestamp - data.uptime.duration_seconds;
+             state.servers[key] = { 
+                current: data, 
+                history: [],
+                previousPlayers: 0,
+                trackingStartTs: derivedStartTime 
+            };
+        }
+
+        // --- Clock Logic ---
+        function startClock() {
+            if (clockInterval) clearInterval(clockInterval);
+            clockInterval = setInterval(() => {
+                if (state.selectedKey && state.servers[state.selectedKey]) {
+                    const server = state.servers[state.selectedKey];
+                    // Calculate elapsed time locally
+                    const now = Date.now() / 1000;
+                    const elapsed = Math.floor(now - server.trackingStartTs);
+                    
+                    document.getElementById('detailUptime').textContent = formatDuration(elapsed);
+                }
+            }, 1000);
+        }
+
+        // --- UI Rendering ---
+
+        function renderSidebar() {
+            const list = document.getElementById('serverList');
+            const keys = Object.keys(state.servers);
+            
+            if (keys.length === 0) {
+                document.getElementById('emptyState').classList.remove('hidden');
+                return;
+            }
+            document.getElementById('emptyState').classList.add('hidden');
+            
+            keys.forEach(key => {
+                if (!document.getElementById(`sidebar-${key}`)) {
+                    const server = state.servers[key];
+                    const title = state.titles[key] || key;
+                    const el = document.createElement('div');
+                    el.id = `sidebar-${key}`;
+                    el.className = 'server-item p-3 mb-2 rounded-lg cursor-pointer hover:bg-slate-800 transition-all border-l-4 border-transparent flex items-center gap-3 group';
+                    el.onclick = () => selectServer(key);
+                    
+                    el.innerHTML = `
+                        <div class="relative">
+                            <img src="${server.current.favicon || ''}" onerror="this.style.display='none'" class="w-10 h-10 rounded bg-slate-700 object-cover favicon-img">
+                            <div class="w-10 h-10 rounded bg-slate-700 flex items-center justify-center text-slate-500 fallback-icon" style="display: ${server.current.favicon ? 'none' : 'flex'}">
+                                <i class="fa-solid fa-gamepad"></i>
+                            </div>
+                            <div class="absolute -bottom-1 -right-1 w-3 h-3 rounded-full border-2 border-slate-900 status-dot"></div>
+                        </div>
+                        <div class="overflow-hidden">
+                            <h3 class="font-bold text-slate-200 truncate group-hover:text-white transition-colors title-text">${title}</h3>
+                            <p class="text-xs text-slate-500 truncate ip-text">${key}</p>
+                        </div>
+                    `;
+                    list.appendChild(el);
+                }
+                renderSidebarItem(key);
+            });
+        }
+
+        function renderSidebarItem(key) {
+            const el = document.getElementById(`sidebar-${key}`);
+            if (!el) return;
+            
+            const server = state.servers[key];
+            const isOnline = server.current.online;
+            
+            const dot = el.querySelector('.status-dot');
+            dot.className = `absolute -bottom-1 -right-1 w-3 h-3 rounded-full border-2 border-slate-900 status-dot ${isOnline ? 'bg-green-500' : 'bg-red-500'}`;
+
+            if (state.selectedKey === key) {
+                el.classList.add('active');
+            } else {
+                el.classList.remove('active');
+            }
+        }
+
+        function selectServer(key) {
+            if (state.selectedKey) renderSidebarItem(state.selectedKey);
+            state.selectedKey = key;
+            renderSidebarItem(key);
+            
+            document.getElementById('welcomeView').classList.add('hidden');
+            document.getElementById('detailView').classList.remove('hidden');
+            document.getElementById('detailView').classList.add('flex');
+            
+            initChart();
+            renderDetailView(key);
+        }
+
+        function renderDetailView(key) {
+            const server = state.servers[key];
+            if (!server) return;
+            const data = server.current;
+            const title = state.titles[key] || key;
+
+            document.getElementById('detailTitle').textContent = title;
+            document.getElementById('detailAddress').textContent = `${data.address}:${data.port}`;
+            
+            const favImg = document.getElementById('detailFavicon');
+            const favPlace = document.getElementById('detailIconPlaceholder');
+            if (data.favicon) {
+                favImg.src = data.favicon;
+                favImg.classList.remove('hidden');
+                favPlace.classList.add('hidden');
+            } else {
+                favImg.classList.add('hidden');
+                favPlace.classList.remove('hidden');
+            }
+
+            const badge = document.getElementById('detailStatusBadge');
+            if (data.online) {
+                badge.textContent = "Online";
+                badge.className = "px-2 py-1 rounded bg-green-500/20 text-green-400 border border-green-500/30 font-medium text-xs";
+            } else {
+                badge.textContent = "Offline";
+                badge.className = "px-2 py-1 rounded bg-red-500/20 text-red-400 border border-red-500/30 font-medium text-xs";
+            }
+
+            const durationSecs = data.uptime.duration_seconds;
+            document.getElementById('detailUptime').textContent = formatDuration(durationSecs);
+
+            const pings = server.history.map(h => h.latency).filter(l => l > 0);
+            const recentPings = pings.slice(-60); // Last 60 successful pings
+            const avgPing = recentPings.length ? Math.round(recentPings.reduce((a, b) => a + b, 0) / recentPings.length) : 0;
+            document.getElementById('detailAvgPing').textContent = data.online ? avgPing : '--';
+
+            document.getElementById('detailPlayers').textContent = `${data.players.online} / ${data.players.max}`;
+            
+            const uptimePct = data.uptime.percentage;
+            const uptimeEl = document.getElementById('detailUptimePercent');
+            uptimeEl.textContent = `${uptimePct}%`;
+            
+            if (uptimePct >= 99) uptimeEl.className = "text-3xl font-bold text-green-400";
+            else if (uptimePct >= 90) uptimeEl.className = "text-3xl font-bold text-yellow-400";
+            else uptimeEl.className = "text-3xl font-bold text-red-400";
+
+            document.getElementById('detailUptimeRatio').textContent = "Based on tracked duration";
+
+            const deltaEl = document.getElementById('playerDelta');
+            const deltaVal = data.players.online - server.previousPlayers;
+            
+            if (deltaVal !== 0) {
+                deltaEl.classList.remove('hidden', 'bg-green-500/20', 'text-green-400', 'bg-red-500/20', 'text-red-400');
+                deltaEl.classList.add('flex');
+                
+                deltaEl.classList.remove('delta-indicator');
+                void deltaEl.offsetWidth; // trigger reflow
+                deltaEl.classList.add('delta-indicator');
+
+                if (deltaVal > 0) {
+                    deltaEl.classList.add('bg-green-500/20', 'text-green-400');
+                    document.getElementById('playerDeltaIcon').className = "fa-solid fa-arrow-up";
+                    document.getElementById('playerDeltaValue').textContent = deltaVal;
+                } else {
+                    deltaEl.classList.add('bg-red-500/20', 'text-red-400');
+                    document.getElementById('playerDeltaIcon').className = "fa-solid fa-arrow-down";
+                    document.getElementById('playerDeltaValue').textContent = Math.abs(deltaVal);
+                }
+            } else {
+                 deltaEl.classList.add('hidden');
+                 deltaEl.classList.remove('flex');
+            }
+
+            document.getElementById('detailMotd').textContent = data.motd || 'No message of the day.';
+
+            updateChart(server.history);
+        }
+
+        // --- Chart Logic ---
+        function initChart() {
+            const ctx = document.getElementById('performanceChart').getContext('2d');
+            
+            if (chartInstance) {
+                chartInstance.destroy();
+            }
+
+            chartInstance = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [
+                        {
+                            label: 'Latency (ms)',
+                            data: [],
+                            borderColor: '#3b82f6', // Blue
+                            backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                            borderWidth: 2,
+                            tension: 0.3,
+                            fill: true,
+                            yAxisID: 'y'
+                        },
+                        {
+                            label: 'Players',
+                            data: [],
+                            borderColor: '#a855f7', // Purple
+                            backgroundColor: 'transparent',
+                            borderWidth: 2,
+                            borderDash: [5, 5],
+                            tension: 0.1,
+                            yAxisID: 'y1'
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    animation: false,
+                    interaction: {
+                        mode: 'index',
+                        intersect: false,
+                    },
+                    plugins: {
+                        legend: {
+                            labels: { color: '#94a3b8' }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            grid: { color: '#1e293b' },
+                            ticks: { 
+                                color: '#64748b', 
+                                maxTicksLimit: 5, // Only 5 titles allowed
+                                callback: function(val, index, ticks) {
+                                    // val is the label (timestamp in our case)
+                                    // Use 'this.getLabelForValue(val)' to be safe
+                                    const timestamp = this.getLabelForValue(val);
+                                    
+                                    // Need range to decide format
+                                    const minTs = this.getLabelForValue(ticks[0].value);
+                                    const maxTs = this.getLabelForValue(ticks[ticks.length - 1].value);
+                                    const durationSecs = maxTs - minTs;
+                                    
+                                    const date = new Date(timestamp * 1000);
+                                    
+                                    // Shrinking Format Logic:
+                                    // < 5 mins: HH:mm:ss
+                                    // >= 5 mins & < 24 hours: HH:mm
+                                    // >= 24 hours: dd/MM HH:mm
+                                    
+                                    if (durationSecs < 300) { // < 5 mins
+                                        return date.toLocaleTimeString(); 
+                                    } else if (durationSecs < 86400) { // < 1 day
+                                        const h = date.getHours().toString().padStart(2, '0');
+                                        const m = date.getMinutes().toString().padStart(2, '0');
+                                        return `${h}:${m}`;
+                                    } else {
+                                        const d = date.getDate().toString().padStart(2, '0');
+                                        const M = (date.getMonth() + 1).toString().padStart(2, '0');
+                                        const h = date.getHours().toString().padStart(2, '0');
+                                        const m = date.getMinutes().toString().padStart(2, '0');
+                                        return `${d}/${M} ${h}:${m}`;
+                                    }
+                                }
+                            }
+                        },
+                        y: {
+                            type: 'linear',
+                            display: true,
+                            position: 'left',
+                            grid: { color: '#1e293b' },
+                            ticks: { color: '#64748b' },
+                            title: { display: true, text: 'Latency (ms)', color: '#475569' }
+                        },
+                        y1: {
+                            type: 'linear',
+                            display: true,
+                            position: 'right',
+                            grid: { drawOnChartArea: false },
+                            ticks: { color: '#64748b', precision: 0 },
+                            title: { display: true, text: 'Players', color: '#475569' }
+                        }
+                    }
+                }
+            });
+        }
+
+        function updateChart(history) {
+            if (!chartInstance) return;
+            
+            // Pass Raw Timestamps as Labels
+            const labels = history.map(h => h.timestamp);
+            const latencies = history.map(h => h.latency);
+            const players = history.map(h => h.players);
+
+            chartInstance.data.labels = labels;
+            chartInstance.data.datasets[0].data = latencies;
+            chartInstance.data.datasets[1].data = players;
+            chartInstance.update();
+        }
+
+        // --- Modal & Actions ---
+        function openModal() {
+            document.getElementById('addModal').classList.remove('hidden');
+            setTimeout(() => {
+                const content = document.getElementById('modalContent');
+                content.classList.remove('scale-95', 'opacity-0');
+                content.classList.add('scale-100', 'opacity-100');
+            }, 10);
+        }
+
+        function closeModal() {
+            const content = document.getElementById('modalContent');
+            content.classList.remove('scale-100', 'opacity-100');
+            content.classList.add('scale-95', 'opacity-0');
+            setTimeout(() => {
+                document.getElementById('addModal').classList.add('hidden');
+            }, 300);
+            
+            document.getElementById('inputTitle').value = '';
+            document.getElementById('inputIp').value = '';
+            document.getElementById('inputPort').value = '25565';
+        }
+
+        function submitAddServer() {
+            const title = document.getElementById('inputTitle').value;
+            const ip = document.getElementById('inputIp').value;
+            let port = document.getElementById('inputPort').value;
+            
+            if (!ip) return alert("IP Address is required");
+            if (!port) port = "25565";
+
+            const key = `${ip}:${port}`;
+            state.titles[key] = title || ip;
+            localStorage.setItem('mc_tracker_titles', JSON.stringify(state.titles));
+
+            ws.send(JSON.stringify({
+                action: 'add',
+                address: ip,
+                port: port
+            }));
+
+            closeModal();
+        }
+
+        function deleteCurrentServer() {
+            if (!state.selectedKey) return;
+            
+            if (confirm("Stop tracking this server? History will be lost.")) {
+                const [address, port] = state.selectedKey.split(':');
+                ws.send(JSON.stringify({
+                    action: 'delete',
+                    address: address,
+                    port: port
+                }));
+                delete state.titles[state.selectedKey];
+                localStorage.setItem('mc_tracker_titles', JSON.stringify(state.titles));
+            }
+        }
+
+        // --- Helpers ---
+        function formatDuration(seconds) {
+            if (seconds < 0) seconds = 0;
+            const h = Math.floor(seconds / 3600);
+            const m = Math.floor((seconds % 3600) / 60);
+            const s = Math.floor(seconds % 60);
+            return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+        }
+
+        // Initialize
+        connect();
+        startClock();
+
+    </script>
+</body>
+</html>
