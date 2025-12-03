@@ -64,7 +64,7 @@ pip install pyinstaller
 
 2. Build the executable (bundle backend + HTML):
 ```bash
-pyinstaller --noconsole --onefile --add-data "backend.py;." --add-data "index.html;."
+python -m PyInstaller --noconfirm --onefile --windowed --name "MCTrackerSetup" --add-data "backend.py;." --add-data "index.html;." launcher.py
 ```
 
 > **Note:**  
@@ -131,7 +131,7 @@ pip install pyinstaller
 
 2. Build EXE:
 ```bash
-pyinstaller --noconsole --onefile --add-data "backend.py;." --add-data "index.html;."
+python -m PyInstaller --noconfirm --onefile --windowed --name "MCTrackerSetup" --add-data "backend.py;." --add-data "index.html;." launcher.py
 ```
 
 > **Lưu ý:**  
