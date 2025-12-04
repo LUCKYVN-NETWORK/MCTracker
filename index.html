@@ -51,9 +51,45 @@
         .delta-indicator {
             animation: popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
         }
+
+        /* Buffering / Loading Spinner */
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid rgba(59, 130, 246, 0.3);
+            border-radius: 50%;
+            border-top-color: #3b82f6;
+            animation: spin 1s ease-in-out infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .buffering-overlay {
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.3s ease;
+        }
+        .buffering .buffering-overlay {
+            opacity: 1;
+            pointer-events: all;
+        }
+        /* Dim main content when buffering */
+        .buffering main {
+            opacity: 0.5;
+            transition: opacity 0.3s ease;
+            pointer-events: none;
+        }
     </style>
 </head>
-<body class="h-screen w-screen flex overflow-hidden font-sans">
+<body class="h-screen w-screen flex overflow-hidden font-sans relative" id="appBody">
+
+    <!-- Buffering Overlay -->
+    <div class="buffering-overlay absolute inset-0 z-50 flex flex-col items-center justify-center bg-slate-900/50 backdrop-blur-sm">
+        <div class="spinner mb-4"></div>
+        <div class="text-blue-400 font-mono text-sm tracking-wider animate-pulse">CATCHING UP...</div>
+    </div>
 
     <!-- SIDEBAR (25-40% width, flexible) -->
     <aside class="w-1/4 min-w-[300px] max-w-[400px] bg-slate-900 border-r border-slate-800 flex flex-col h-full z-10">
@@ -79,12 +115,12 @@
         <!-- Connection Status Footer -->
         <div class="p-3 bg-slate-950 text-xs text-slate-500 flex justify-between items-center">
             <span id="connectionStatus"><i class="fa-solid fa-circle text-red-500 mr-1"></i> Disconnected</span>
-            <span id="version">v1.2.1</span>
+            <span id="version">v1.2.2</span>
         </div>
     </aside>
 
     <!-- MAIN CONTENT AREA -->
-    <main class="flex-1 h-full relative flex flex-col bg-slate-950 overflow-hidden">
+    <main class="flex-1 h-full relative flex flex-col bg-slate-950 overflow-hidden transition-opacity">
         
         <!-- Welcome / Empty View -->
         <div id="welcomeView" class="absolute inset-0 flex items-center justify-center flex-col text-slate-600">
@@ -231,15 +267,55 @@
         let ws = null;
         let clockInterval = null;
 
+        // --- Optimization: Queue System ---
+        const messageQueue = [];
+        let isProcessingQueue = false;
+
+        function processQueue() {
+            if (messageQueue.length === 0) {
+                isProcessingQueue = false;
+                // If queue is empty, remove buffering state
+                document.getElementById('appBody').classList.remove('buffering');
+                return;
+            }
+
+            isProcessingQueue = true;
+            
+            // Performance: If backlog is huge (tab unfocused for hours), 
+            // show buffering UI
+            if (messageQueue.length > 20) {
+                document.getElementById('appBody').classList.add('buffering');
+            }
+
+            // Process a chunk of messages to keep UI responsive
+            // We process up to 500 messages per frame
+            const CHUNK_SIZE = 500;
+            const chunk = messageQueue.splice(0, CHUNK_SIZE);
+            
+            let needsSidebarUpdate = false;
+            let needsChartUpdate = false;
+
+            chunk.forEach(msg => {
+                const result = processMessageInternal(msg);
+                if (result.sidebar) needsSidebarUpdate = true;
+                if (result.chart) needsChartUpdate = true;
+            });
+
+            // Batch UI updates
+            if (needsSidebarUpdate) renderSidebar();
+            if (needsChartUpdate && state.selectedKey) renderDetailView(state.selectedKey);
+
+            // Schedule next batch
+            requestAnimationFrame(processQueue);
+        }
+
         // --- WebSocket Setup ---
         function connect() {
             ws = new WebSocket('ws://localhost:8080/ws');
 
             ws.onopen = () => {
                 document.getElementById('connectionStatus').innerHTML = '<i class="fa-solid fa-circle text-green-500 mr-1"></i> Connected';
-                // Request all current servers from backend immediately
                 ws.send(JSON.stringify({ action: 'get_servers' }));
-                requestAnimationFrame(renderSidebar);
             };
 
             ws.onclose = () => {
@@ -249,32 +325,37 @@
 
             ws.onmessage = (event) => {
                 const msg = JSON.parse(event.data);
-                handleMessage(msg);
+                // Push to queue instead of processing immediately
+                messageQueue.push(msg);
+                if (!isProcessingQueue) {
+                    processQueue();
+                }
             };
         }
 
-        function handleMessage(msg) {
-            // New logic: Backend can send 'history_dump' (array) or 'update' (single object)
+        // Logic decoupled from rendering
+        function processMessageInternal(msg) {
+            let sidebarUpdate = false;
+            let chartUpdate = false;
+
             if (msg.type === 'history_dump') {
                 const history = msg.data;
-                if (!history.length) return;
+                if (!history.length) return { sidebar: false, chart: false };
+                
                 const latest = history[history.length - 1];
                 const key = `${latest.address}:${latest.port}`;
                 
-                // Initialize server
                 initializeServerState(key, latest);
                 
-                // Load history (converting raw backend timestamps)
+                // Mapped history
                 state.servers[key].history = history.map(h => ({
-                    timestamp: h.timestamp, // Keep raw timestamp for graph logic
-                    time: new Date(h.timestamp * 1000).toLocaleTimeString(), // Fallback label
+                    timestamp: h.timestamp,
                     latency: h.latency,
                     players: h.players.online
                 }));
 
-                // Update UI
-                renderSidebar();
-                if (state.selectedKey === key) renderDetailView(key);
+                sidebarUpdate = true;
+                if (state.selectedKey === key) chartUpdate = true;
 
             } else if (msg.type === 'update') {
                 const data = msg.data;
@@ -284,27 +365,26 @@
                 if (!state.servers[key]) {
                     isNew = true;
                     initializeServerState(key, data);
+                    sidebarUpdate = true;
                 } else {
                     state.servers[key].previousPlayers = state.servers[key].current.players.online;
                     state.servers[key].current = data;
                 }
 
-                // Add to history
                 state.servers[key].history.push({
-                    timestamp: data.timestamp, // RAW TIMESTAMP FOR CHART
-                    time: new Date(data.timestamp * 1000).toLocaleTimeString(),
+                    timestamp: data.timestamp,
                     latency: data.latency,
                     players: data.players.online
                 });
                 
-                // Limit to ~24h (17280 points) instead of 180
                 if (state.servers[key].history.length > 17280) state.servers[key].history.shift();
 
-                // Update UI
-                if (isNew) renderSidebar();
-                else renderSidebarItem(key);
-                
-                if (state.selectedKey === key) renderDetailView(key);
+                // Only trigger chart update if this is the currently viewed server
+                if (state.selectedKey === key) chartUpdate = true;
+                // Only trigger sidebar redraw if it's new, otherwise we handle sidebar live updates separately for performance?
+                // For now, let's just flag it. Sidebar is cheap.
+                sidebarUpdate = true;
+
             } else if (msg.type === 'remove') {
                 delete state.servers[msg.key];
                 if (state.selectedKey === msg.key) {
@@ -312,8 +392,10 @@
                     document.getElementById('welcomeView').classList.remove('hidden');
                     document.getElementById('detailView').classList.add('hidden');
                 }
-                renderSidebar();
+                sidebarUpdate = true;
             }
+
+            return { sidebar: sidebarUpdate, chart: chartUpdate };
         }
 
         function initializeServerState(key, data) {
@@ -332,10 +414,8 @@
             clockInterval = setInterval(() => {
                 if (state.selectedKey && state.servers[state.selectedKey]) {
                     const server = state.servers[state.selectedKey];
-                    // Calculate elapsed time locally
                     const now = Date.now() / 1000;
                     const elapsed = Math.floor(now - server.trackingStartTs);
-                    
                     document.getElementById('detailUptime').textContent = formatDuration(elapsed);
                 }
             }, 1000);
@@ -444,7 +524,7 @@
             document.getElementById('detailUptime').textContent = formatDuration(durationSecs);
 
             const pings = server.history.map(h => h.latency).filter(l => l > 0);
-            const recentPings = pings.slice(-60); // Last 60 successful pings
+            const recentPings = pings.slice(-60); 
             const avgPing = recentPings.length ? Math.round(recentPings.reduce((a, b) => a + b, 0) / recentPings.length) : 0;
             document.getElementById('detailAvgPing').textContent = data.online ? avgPing : '--';
 
@@ -511,7 +591,10 @@
                             borderWidth: 2,
                             tension: 0.3,
                             fill: true,
-                            yAxisID: 'y'
+                            yAxisID: 'y',
+                            pointRadius: 0, // HIDE DOTS
+                            pointHoverRadius: 4,
+                            pointHitRadius: 10
                         },
                         {
                             label: 'Players',
@@ -521,7 +604,10 @@
                             borderWidth: 2,
                             borderDash: [5, 5],
                             tension: 0.1,
-                            yAxisID: 'y1'
+                            yAxisID: 'y1',
+                            pointRadius: 0, // HIDE DOTS
+                            pointHoverRadius: 4,
+                            pointHitRadius: 10
                         }
                     ]
                 },
@@ -536,6 +622,24 @@
                     plugins: {
                         legend: {
                             labels: { color: '#94a3b8' }
+                        },
+                        tooltip: {
+                            callbacks: {
+                                title: function(context) {
+                                    // Custom tooltip title formatter
+                                    const timestamp = context[0].label;
+                                    const date = new Date(timestamp * 1000);
+                                    
+                                    // dd-MM HH:mm:ss
+                                    const d = date.getDate().toString().padStart(2, '0');
+                                    const M = (date.getMonth() + 1).toString().padStart(2, '0');
+                                    const h = date.getHours().toString().padStart(2, '0');
+                                    const m = date.getMinutes().toString().padStart(2, '0');
+                                    const s = date.getSeconds().toString().padStart(2, '0');
+                                    
+                                    return `${d}-${M} ${h}:${m}:${s}`;
+                                }
+                            }
                         }
                     },
                     scales: {
@@ -543,27 +647,17 @@
                             grid: { color: '#1e293b' },
                             ticks: { 
                                 color: '#64748b', 
-                                maxTicksLimit: 5, // Only 5 titles allowed
+                                maxTicksLimit: 5,
                                 callback: function(val, index, ticks) {
-                                    // val is the label (timestamp in our case)
-                                    // Use 'this.getLabelForValue(val)' to be safe
                                     const timestamp = this.getLabelForValue(val);
-                                    
-                                    // Need range to decide format
                                     const minTs = this.getLabelForValue(ticks[0].value);
                                     const maxTs = this.getLabelForValue(ticks[ticks.length - 1].value);
                                     const durationSecs = maxTs - minTs;
-                                    
                                     const date = new Date(timestamp * 1000);
                                     
-                                    // Shrinking Format Logic:
-                                    // < 5 mins: HH:mm:ss
-                                    // >= 5 mins & < 24 hours: HH:mm
-                                    // >= 24 hours: dd/MM HH:mm
-                                    
-                                    if (durationSecs < 300) { // < 5 mins
+                                    if (durationSecs < 300) { 
                                         return date.toLocaleTimeString(); 
-                                    } else if (durationSecs < 86400) { // < 1 day
+                                    } else if (durationSecs < 86400) { 
                                         const h = date.getHours().toString().padStart(2, '0');
                                         const m = date.getMinutes().toString().padStart(2, '0');
                                         return `${h}:${m}`;
@@ -601,7 +695,6 @@
         function updateChart(history) {
             if (!chartInstance) return;
             
-            // Pass Raw Timestamps as Labels
             const labels = history.map(h => h.timestamp);
             const latencies = history.map(h => h.latency);
             const players = history.map(h => h.players);

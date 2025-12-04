@@ -121,10 +121,23 @@ class MasterControlPanel:
         # We use self.python_exec to ensure we call the actual python interpreter,
         # not the frozen exe wrapper.
         try:
-            subprocess.check_call([self.python_exec, "-m", "pip", "install", "aiohttp", "mcstatus", "--disable-pip-version-check"])
-            self.log("   + Thư viện đã được cài đặt/cập nhật.")
+            # 1. Check if libraries exist first to save time
+            self.log("   ... Đang kiểm tra thư viện...")
+            subprocess.check_call(
+                [self.python_exec, "-c", "import aiohttp; import mcstatus"],
+                stdout=subprocess.DEVNULL, 
+                stderr=subprocess.DEVNULL
+            )
+            self.log("   + Thư viện đã tồn tại. Bỏ qua bước cài đặt.")
+            
         except subprocess.CalledProcessError:
-            self.log("   ! Cảnh báo: Lỗi cài đặt thư viện. Có thể đã tồn tại hoặc thiếu quyền.")
+            # 2. If check fails (import error), then install
+            self.log("   > Chưa tìm thấy thư viện. Đang cài đặt...")
+            try:
+                subprocess.check_call([self.python_exec, "-m", "pip", "install", "aiohttp", "mcstatus", "--disable-pip-version-check"])
+                self.log("   + Thư viện đã được cài đặt thành công.")
+            except subprocess.CalledProcessError:
+                self.log("   ! Cảnh báo: Lỗi cài đặt thư viện. Có thể đã tồn tại hoặc thiếu quyền.")
         except FileNotFoundError:
              self.log(f"   ! Lỗi: Không tìm thấy '{self.python_exec}'. Hãy đảm bảo Python đã được cài đặt.")
 
